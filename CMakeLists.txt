@@ -6,7 +6,7 @@ include(FetchContent)
 
 option(CONTINGENCYTABLE_BUILD_EXAMPLES "Build ContingencyTable examples" OFF)
 
-# Keep DataTable dependency lightweight.
+# Keep DataTable dependency lightweight
 set(DATATABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(DATATABLE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
@@ -24,7 +24,8 @@ target_compile_features(ContingencyTable PUBLIC cxx_std_17)
 target_include_directories(
   ContingencyTable
   PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(ContingencyTable PUBLIC DataTable::DataTable)
 
