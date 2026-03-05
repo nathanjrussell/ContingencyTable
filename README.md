@@ -4,9 +4,8 @@ A C++ library for computing contingency tables and chi-square statistics from ca
 
 ## Features
 
-- Column selection by index or header name
-- Row filtering via bitmask
-- Chi-square test with p-value (Wilson-Hilferty approximation)
+- **ContingencyTable**: Column selection by index or header name, row filtering via bitmask, chi-square test with p-value (Wilson-Hilferty approximation), optimal partition search
+- **FeatureSelector**: Automated feature selection across multiple columns with Bonferroni correction, finds most significant feature and optimal partition
 - No external dependencies beyond DataTable
 - SLURM-friendly (no Boost required)
 
@@ -66,7 +65,58 @@ P-value:              0.0114211
 
 Significant (p < 0.05) - first-class passengers had better survival rates.
 
+### 3. Run Feature Selection
+
+```bash
+./build/feature_selector examples/datasets/titanic_output
+```
+
+This demonstrates automated feature selection with the FeatureSelector class:
+
+Output:
+```
+Loaded DataTable from: examples/datasets/titanic_output
+Total rows: 61
+Total columns: 8
+
+========== Example 1: Feature Selection ==========
+Target: Column 0 (first column)
+Candidates: All other columns
+
+Searching for most significant feature...
+✗ No significant feature found at alpha=0.05
+
+========== Example 2: Select Specific Columns ==========
+Target: Column 1 (Survived)
+Candidates: Column 2 (Pclass), Column 3 (Sex)
+
+✓ Best feature: Column 3 (Sex)
+  Chi-square: 15.0179
+  P-value: 0.000169323
+
+========== Example 3: Row Filtering ==========
+Testing on rows 11-61
+Target: Column 0
+Candidates: All except column 0
+
+✗ No significant feature found
+
+========== Example 4: Strict Alpha (High Correction) ==========
+Using strict alpha = 0.001 with Bonferroni correction
+This makes it harder to find significant features
+
+✗ No significant feature found at alpha=0.001
+```
+
+The FeatureSelector automatically:
+- Tests all candidate columns against the target
+- Applies Bonferroni correction for multiple testing
+- Identifies the most significant feature (Sex in Example 2)
+- Can search for optimal partitions on significant features
+
 ## API
+
+### ContingencyTable
 
 ```cpp
 #include <ContingencyTable/ContingencyTable.h>
@@ -107,6 +157,58 @@ int main() {
 }
 ```
 
+### FeatureSelector
+
+```cpp
+#include <ContingencyTable/FeatureSelector.h>
+#include <iostream>
+#include <vector>
+
+int main() {
+    ContingencyTableLib::FeatureSelector fs;
+    
+    // Load parsed dataset
+    fs.load("examples/datasets/titanic_output");
+    fs.setTargetColumn(1);  // Survived column
+    
+    // Enable rows (all rows in this example)
+    std::vector<std::uint32_t> rowMask(4, 0xFFFFFFFF);
+    fs.enabledRows(rowMask.data(), 128);
+    
+    // Enable candidate columns (columns 2, 3, 4 via bitmask)
+    std::uint32_t colMask = 0b11100;  // bits 2, 3, 4 set
+    fs.enabledColumns(&colMask, 5);
+    
+    // Configure alpha thresholds with Bonferroni correction
+    fs.setColumnAlpha(0.05, true);      // Apply Bonferroni for column selection
+    fs.setPartitionAlpha(0.05, false);  // No correction for partition search
+    fs.setSkipEmptyValues(true);
+    
+    // Find most significant column
+    fs.findSignificantColumn();
+    
+    if (fs.significantColumnFound()) {
+        std::cout << "Best feature: column " << fs.getSignificantColumnIndex() << "\n";
+        std::cout << "Chi-square: " << fs.getColumnTestStatistic() << "\n";
+        std::cout << "P-value: " << fs.getColumnPValue() << "\n";
+        std::cout << "DF: " << fs.getColumnDegreesOfFreedom() << "\n";
+        
+        // Check if a partition was found
+        if (fs.significantPartitionFound()) {
+            auto p0 = fs.getFirstPartition();
+            auto p1 = fs.getSecondPartition();
+            std::cout << "Partition found with " << p0.size() 
+                      << " and " << p1.size() << " categories\n";
+            std::cout << "Partition chi-square: " << fs.getPartitionTestStatistic() << "\n";
+        }
+    } else {
+        std::cout << "No significant feature found\n";
+    }
+    
+    return 0;
+}
+```
+
 **To compile and run this example:**
 ```bash
 # First, parse the Titanic dataset
@@ -142,5 +244,58 @@ examples/datasets/data_set_1.csv              - Sample Titanic data
 - C++17 compiler
 - CMake 3.21+
 
+## Unit Tests
 
+Unit tests use Google Test and are registered with CTest.
 
+### Build With Tests
+
+Tests are enabled by default (`CONTINGENCYTABLE_BUILD_TESTS=ON`):
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+```
+
+### Run All Tests
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+### Run Test Binary Directly (Optional)
+
+```bash
+./build/ContingencyTableTests
+./build/ContingencyTableTests --gtest_list_tests
+./build/ContingencyTableTests --gtest_filter=FeatureSelector.*
+```
+
+### Current Test Cases (13 total)
+
+**ContingencyTable (6 tests):**
+- Build_PerfectIndependence_ComputesExpectedChiSquare
+- Build_KnownTable_ComputesExpectedChiSquareAndDf
+- GetPValue_KnownTable_IsWithinBoundsAndExpectedRange
+- FindOptimalPartition_KnownTable_FindsSignificantPartition
+- SetRowFilter_ExcludingRow_ChangesChiSquare
+- SetSkipEmptyValues_Toggle_ProducesValidStatistics
+
+**FeatureSelector (7 tests):**
+- FindSignificantColumn_WithBonferroniCorrection_FindsStrongSignal
+- ThrowsWhenAccessingResultsBeforeSearch
+- NoSignificantColumnFound_ReturnsFalse
+- PartitionSearchOnSignificantColumn_FindsPartition
+- SkipEmptyValues_IsRespected
+- BonferroniCorrection_AdjustsAlphaCorrectly
+- RowFiltering_AffectsResults
+
+### Notes
+
+- Tests create temporary CSV datasets under `/tmp` and clean up automatically.
+- To build examples and tests together:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCONTINGENCYTABLE_BUILD_EXAMPLES=ON -DCONTINGENCYTABLE_BUILD_TESTS=ON
+cmake --build build -j
+```

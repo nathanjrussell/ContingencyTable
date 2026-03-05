@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <random>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -62,14 +64,13 @@ bool ContingencyTable::isRowIncluded(std::uint64_t row) const {
   if (row >= bitmaskSize_) {
     return false;
   }
-  const std::uint32_t wordIndex = static_cast<std::uint32_t>(row / 32);
-  const std::uint32_t bitIndex = static_cast<std::uint32_t>(row % 32);
-  return (rowBitmask_[wordIndex] & (1U << bitIndex)) != 0;
+  return isBitSet(rowBitmask_, row);
 }
 
 void ContingencyTable::build() {
   chiSquare_ = 0.0;
   degreesOfFreedom_ = 0;
+  jointCounts_.clear();
 
   const auto rowCount = getRowCount();
   if (rowCount <= 1) {
@@ -101,6 +102,9 @@ void ContingencyTable::build() {
     dirty_ = false;
     return;
   }
+
+  // Store joint counts for later use in findOptimalPartition
+  jointCounts_ = counts;
 
   // Build dense remapping for observed features only
   std::uint32_t nextA = 0;
@@ -212,6 +216,375 @@ double ContingencyTable::chiSquarePValue(double chiSq, std::uint64_t df) const {
   const double pValue = 0.5 * std::erfc(zNorm / std::sqrt(2.0));
 
   return std::max(0.0, std::min(1.0, pValue));
+}
+
+double ContingencyTable::getPartitionChiSquare() const {
+  return partitionChiSquare_;
+}
+
+double ContingencyTable::getPartitionPValue() const {
+  return partitionPValue_;
+}
+
+std::uint64_t ContingencyTable::getPartitionDegreesOfFreedom() const {
+  return partitionDegreesOfFreedom_;
+}
+
+std::uint32_t ContingencyTable::determineRestarts(std::size_t numFeaturesB, double adjustedAlpha) const {
+  // Bonferroni correction: assume testing ~2^|B| partitions
+  // Map adjusted alpha (post-correction) to restart count
+
+  std::uint32_t restarts;
+
+  if (adjustedAlpha < 0.0001) {
+    restarts = 15;
+  } else if (adjustedAlpha < 0.001) {
+    restarts = 10;
+  } else if (adjustedAlpha < 0.01) {
+    restarts = 7;
+  } else {
+    restarts = 4;
+  }
+
+  // Cap at 5 for very large feature sets (cost scaling)
+  if (numFeaturesB > 30) {
+    restarts = std::min(restarts, 5U);
+  }
+
+  return restarts;
+}
+
+std::optional<PartitionResult> ContingencyTable::greedySearch(double adjustedAlpha) {
+  if (jointCounts_.empty()) {
+    return std::nullopt;
+  }
+
+  // Extract unique features in column B
+  std::set<std::uint32_t> featuresB;
+  for (const auto& kv : jointCounts_) {
+    featuresB.insert(kv.first.second);
+  }
+
+  if (featuresB.size() < 2) {
+    return std::nullopt;
+  }
+
+  // Initialize: start with random partition
+  std::vector<std::uint32_t> partition0(featuresB.begin(), featuresB.end());
+  std::vector<std::uint32_t> partition1;
+
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::shuffle(partition0.begin(), partition0.end(), gen);
+
+  // Move half to partition1
+  std::size_t midpoint = partition0.size() / 2;
+  partition1.assign(partition0.begin() + midpoint, partition0.end());
+  partition0.erase(partition0.begin() + midpoint, partition0.end());
+
+  PartitionResult bestResult;
+  bestResult.partition0 = partition0;
+  bestResult.partition1 = partition1;
+
+  // Evaluate initial partition
+  {
+    std::set<std::uint32_t> featuresInP0(partition0.begin(), partition0.end());
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint64_t> repartitioned;
+
+    for (const auto& kv : jointCounts_) {
+      auto featureB = kv.first.second;
+      auto mappedB = (featuresInP0.count(featureB) > 0) ? 0U : 1U;
+      repartitioned[{kv.first.first, mappedB}] += kv.second;
+    }
+
+    // Compute chi-square on repartitioned table
+    std::map<std::uint32_t, std::uint32_t> featureMapA;
+    std::map<std::uint32_t, std::uint32_t> featureMapB;
+    std::uint32_t nextA = 0, nextB = 0;
+
+    for (const auto& kv : repartitioned) {
+      if (featureMapA.find(kv.first.first) == featureMapA.end()) {
+        featureMapA[kv.first.first] = nextA++;
+      }
+      if (featureMapB.find(kv.first.second) == featureMapB.end()) {
+        featureMapB[kv.first.second] = nextB++;
+      }
+    }
+
+    const std::size_t numRowCategories = featureMapA.size();
+    const std::size_t numColCategories = featureMapB.size();
+
+    if (numRowCategories >= 2 && numColCategories >= 2) {
+      std::vector<std::vector<std::uint64_t>> observed(
+          numRowCategories,
+          std::vector<std::uint64_t>(numColCategories, 0));
+
+      for (const auto& kv : repartitioned) {
+        const auto denseA = featureMapA.at(kv.first.first);
+        const auto denseB = featureMapB.at(kv.first.second);
+        observed[denseA][denseB] = kv.second;
+      }
+
+      std::vector<double> rowTotals(numRowCategories, 0.0);
+      std::vector<double> colTotals(numColCategories, 0.0);
+      double grandTotal = 0.0;
+
+      for (std::size_t r = 0; r < numRowCategories; ++r) {
+        for (std::size_t c = 0; c < numColCategories; ++c) {
+          const double val = static_cast<double>(observed[r][c]);
+          rowTotals[r] += val;
+          colTotals[c] += val;
+          grandTotal += val;
+        }
+      }
+
+      double chiSq = 0.0;
+      if (grandTotal > 0.0) {
+      for (std::size_t r = 0; r < numRowCategories; ++r) {
+        for (std::size_t c = 0; c < numColCategories; ++c) {
+          const double expected = (rowTotals[r] * colTotals[c]) / grandTotal;
+          if (expected > 0.0) {
+            const double obs = static_cast<double>(observed[r][c]);
+            const double diff = obs - expected;
+            chiSq += (diff * diff) / expected;
+          }
+        }
+      }
+
+        bestResult.chiSquare = chiSq;
+        const std::uint64_t df = (numRowCategories - 1) * (numColCategories - 1);
+        bestResult.pValue = chiSquarePValue(chiSq, df);
+        bestResult.degreesOfFreedom = df;
+      }
+    }
+  }
+
+  // Greedy refinement: try moving each feature
+  bool improved = true;
+  while (improved) {
+    improved = false;
+    double bestChiSq = bestResult.chiSquare;
+
+    for (std::size_t i = 0; i < partition0.size(); ++i) {
+      // Try moving partition0[i] to partition1
+      std::uint32_t feature = partition0[i];
+      std::set<std::uint32_t> featuresInP0(partition0.begin(), partition0.end());
+      featuresInP0.erase(feature);
+
+      std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint64_t> repartitioned;
+      for (const auto& kv : jointCounts_) {
+        auto featureB = kv.first.second;
+        auto mappedB = (featuresInP0.count(featureB) > 0) ? 0U : 1U;
+        repartitioned[{kv.first.first, mappedB}] += kv.second;
+      }
+
+      // Compute chi-square (similar logic as above)
+      std::map<std::uint32_t, std::uint32_t> featureMapA;
+      std::map<std::uint32_t, std::uint32_t> featureMapB;
+      std::uint32_t nextA = 0, nextB = 0;
+
+      for (const auto& kv : repartitioned) {
+        if (featureMapA.find(kv.first.first) == featureMapA.end()) {
+          featureMapA[kv.first.first] = nextA++;
+        }
+        if (featureMapB.find(kv.first.second) == featureMapB.end()) {
+          featureMapB[kv.first.second] = nextB++;
+        }
+      }
+
+      const std::size_t numRowCategories = featureMapA.size();
+      const std::size_t numColCategories = featureMapB.size();
+
+      if (numRowCategories >= 2 && numColCategories >= 2) {
+        std::vector<std::vector<std::uint64_t>> observed(
+            numRowCategories,
+            std::vector<std::uint64_t>(numColCategories, 0));
+
+        for (const auto& kv : repartitioned) {
+          const auto denseA = featureMapA.at(kv.first.first);
+          const auto denseB = featureMapB.at(kv.first.second);
+          observed[denseA][denseB] = kv.second;
+        }
+
+        std::vector<double> rowTotals(numRowCategories, 0.0);
+        std::vector<double> colTotals(numColCategories, 0.0);
+        double grandTotal = 0.0;
+
+        for (std::size_t r = 0; r < numRowCategories; ++r) {
+          for (std::size_t c = 0; c < numColCategories; ++c) {
+            const double val = static_cast<double>(observed[r][c]);
+            rowTotals[r] += val;
+            colTotals[c] += val;
+            grandTotal += val;
+          }
+        }
+
+        if (grandTotal > 0.0) {
+          double chiSq = 0.0;
+          for (std::size_t r = 0; r < numRowCategories; ++r) {
+            for (std::size_t c = 0; c < numColCategories; ++c) {
+              const double expected = (rowTotals[r] * colTotals[c]) / grandTotal;
+              if (expected > 0.0) {
+                const double obs = static_cast<double>(observed[r][c]);
+                const double diff = obs - expected;
+                chiSq += (diff * diff) / expected;
+              }
+            }
+          }
+
+          if (chiSq > bestChiSq) {
+            bestChiSq = chiSq;
+            partition0.erase(partition0.begin() + i);
+            partition1.push_back(feature);
+            improved = true;
+            const std::uint64_t df = (numRowCategories - 1) * (numColCategories - 1);
+            bestResult.chiSquare = chiSq;
+            bestResult.pValue = chiSquarePValue(chiSq, df);
+            bestResult.degreesOfFreedom = df;
+            bestResult.partition0 = partition0;
+            bestResult.partition1 = partition1;
+            break;
+          }
+        }
+      }
+    }
+
+    // Also try moving from partition1 to partition0
+    if (!improved) {
+      for (std::size_t i = 0; i < partition1.size(); ++i) {
+        std::uint32_t feature = partition1[i];
+        std::set<std::uint32_t> featuresInP0(partition0.begin(), partition0.end());
+        featuresInP0.insert(feature);
+
+        std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint64_t> repartitioned;
+        for (const auto& kv : jointCounts_) {
+          auto featureB = kv.first.second;
+          auto mappedB = (featuresInP0.count(featureB) > 0) ? 0U : 1U;
+          repartitioned[{kv.first.first, mappedB}] += kv.second;
+        }
+
+        std::map<std::uint32_t, std::uint32_t> featureMapA;
+        std::map<std::uint32_t, std::uint32_t> featureMapB;
+        std::uint32_t nextA = 0, nextB = 0;
+
+        for (const auto& kv : repartitioned) {
+          if (featureMapA.find(kv.first.first) == featureMapA.end()) {
+            featureMapA[kv.first.first] = nextA++;
+          }
+          if (featureMapB.find(kv.first.second) == featureMapB.end()) {
+            featureMapB[kv.first.second] = nextB++;
+          }
+        }
+
+        const std::size_t numRowCategories = featureMapA.size();
+        const std::size_t numColCategories = featureMapB.size();
+
+        if (numRowCategories >= 2 && numColCategories >= 2) {
+          std::vector<std::vector<std::uint64_t>> observed(
+              numRowCategories,
+              std::vector<std::uint64_t>(numColCategories, 0));
+
+          for (const auto& kv : repartitioned) {
+            const auto denseA = featureMapA.at(kv.first.first);
+            const auto denseB = featureMapB.at(kv.first.second);
+            observed[denseA][denseB] = kv.second;
+          }
+
+          std::vector<double> rowTotals(numRowCategories, 0.0);
+          std::vector<double> colTotals(numColCategories, 0.0);
+          double grandTotal = 0.0;
+
+          for (std::size_t r = 0; r < numRowCategories; ++r) {
+            for (std::size_t c = 0; c < numColCategories; ++c) {
+              const double val = static_cast<double>(observed[r][c]);
+              rowTotals[r] += val;
+              colTotals[c] += val;
+              grandTotal += val;
+            }
+          }
+
+          if (grandTotal > 0.0) {
+            double chiSq = 0.0;
+            for (std::size_t r = 0; r < numRowCategories; ++r) {
+              for (std::size_t c = 0; c < numColCategories; ++c) {
+                const double expected = (rowTotals[r] * colTotals[c]) / grandTotal;
+                if (expected > 0.0) {
+                  const double obs = static_cast<double>(observed[r][c]);
+                  const double diff = obs - expected;
+                  chiSq += (diff * diff) / expected;
+                }
+              }
+            }
+
+            if (chiSq > bestChiSq) {
+              bestChiSq = chiSq;
+              partition1.erase(partition1.begin() + i);
+              partition0.push_back(feature);
+              improved = true;
+              bestResult.chiSquare = chiSq;
+              const std::uint64_t df = (numRowCategories - 1) * (numColCategories - 1);
+              bestResult.pValue = chiSquarePValue(chiSq, df);
+              bestResult.degreesOfFreedom = df;
+              bestResult.partition0 = partition0;
+              bestResult.partition1 = partition1;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return bestResult;
+}
+
+std::optional<PartitionResult> ContingencyTable::findOptimalPartition(double alpha) {
+  if (dirty_) {
+    throw std::logic_error("Must call build() before findOptimalPartition().");
+  }
+
+  if (jointCounts_.empty()) {
+    return std::nullopt;
+  }
+
+  // Extract unique features in column B
+  std::set<std::uint32_t> featuresB;
+  for (const auto& kv : jointCounts_) {
+    featuresB.insert(kv.first.second);
+  }
+
+  const std::size_t numFeaturesB = featuresB.size();
+  if (numFeaturesB < 2) {
+    return std::nullopt;
+  }
+
+  // Apply Bonferroni correction: alpha_adjusted = alpha / 2^|B|
+  const double adjustedAlpha = alpha / std::pow(2.0, static_cast<double>(numFeaturesB));
+
+  // Determine restart count based on adjusted alpha
+  const std::uint32_t restarts = determineRestarts(numFeaturesB, adjustedAlpha);
+
+  // Run greedy search with multiple restarts
+  PartitionResult bestResult;
+  bestResult.chiSquare = -1.0;
+  bestResult.pValue = 1.0;
+
+  for (std::uint32_t i = 0; i < restarts; ++i) {
+    auto result = greedySearch(adjustedAlpha);
+    if (result && result->chiSquare > bestResult.chiSquare) {
+      bestResult = *result;
+    }
+  }
+
+  // Return result only if it meets the adjusted alpha threshold
+  if (bestResult.pValue < adjustedAlpha) {
+    partitionChiSquare_ = bestResult.chiSquare;
+    partitionPValue_ = bestResult.pValue;
+    partitionDegreesOfFreedom_ = bestResult.degreesOfFreedom;
+    return bestResult;
+  }
+
+  return std::nullopt;
 }
 
 }  // namespace ContingencyTableLib
