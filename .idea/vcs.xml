@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/build/_deps/datatable-src" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/build/_deps/hashlibrary-src" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/build/_deps/progressbar-src" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/build_off/_deps/datatable-src" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/build_off/_deps/hashlibrary-src" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/build_off/_deps/progressbar-src" vcs="Git" />
+  </component>
+</project>
