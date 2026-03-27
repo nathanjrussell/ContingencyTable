@@ -14,12 +14,24 @@ void FeatureSelector::load(const std::string& path) {
   dataPath_ = path;
   dataTable_.load(dataPath_);
   dataTableLoaded_ = true;
+
+  // Target column is accessed repeatedly during scans; cache it in DataTable.
+  dataTable_.setFrequentColumn(static_cast<std::uint64_t>(targetColumn_));
   columnFound_ = false;
   partitionFound_ = false;
 }
 
 void FeatureSelector::setTargetColumn(std::size_t columnIndex) {
   targetColumn_ = columnIndex;
+
+  // Hint DataTable that we will repeatedly access the target column.
+  if (dataTableLoaded_) {
+    if (targetColumn_ >= dataTable_.getColumnCount()) {
+      throw std::out_of_range("Target column index is out of range.");
+    }
+    dataTable_.setFrequentColumn(static_cast<std::uint64_t>(targetColumn_));
+  }
+
   columnFound_ = false;
   partitionFound_ = false;
 }
@@ -116,9 +128,16 @@ void FeatureSelector::findSignificantColumn() {
   if (dataPath_.empty()) {
     throw std::runtime_error("No data loaded. Call load() first.");
   }
+  if (!dataTableLoaded_) {
+    throw std::runtime_error("No data loaded. Call load() first.");
+  }
   if (colBitmask_ == nullptr) {
     throw std::runtime_error("Column mask not set. Call enabledColumns() first.");
   }
+
+  // Target column is accessed repeatedly during scans; ensure it is pinned in DataTable.
+  // (Cheap no-op if already set.)
+  dataTable_.setFrequentColumn(static_cast<std::uint64_t>(targetColumn_));
 
   // Count enabled columns for Bonferroni correction
   const std::size_t numTests = countSetBits(colBitmask_, colBitmaskSize_);
@@ -138,23 +157,22 @@ void FeatureSelector::findSignificantColumn() {
   bestDegreesOfFreedom_ = 0;
   bestColumn_ = 0;
 
+  // Reuse a single loaded ContingencyTable (DataTable::load() is relatively expensive for large datasets).
+  ContingencyTable ct;
+  ct.load(dataPath_);
+  ct.setFirstColumn(targetColumn_);
+  ct.setSkipEmptyValues(skipEmptyValues_);
+  if (rowBitmask_ != nullptr) {
+    ct.setRowFilter(rowBitmask_, rowBitmaskSize_);
+  }
+
   // Test each enabled column
   for (std::size_t col = 0; col < colBitmaskSize_; ++col) {
     if (!isBitSet(colBitmask_, col)) {
       continue;
     }
 
-    // Build contingency table for this column vs target
-    ContingencyTable ct;
-    ct.load(dataPath_);
-    ct.setFirstColumn(targetColumn_);
     ct.setSecondColumn(col);
-    ct.setSkipEmptyValues(skipEmptyValues_);
-
-    if (rowBitmask_ != nullptr) {
-      ct.setRowFilter(rowBitmask_, rowBitmaskSize_);
-    }
-
     ct.build();
 
     const double pval = ct.getPValue();
@@ -172,22 +190,13 @@ void FeatureSelector::findSignificantColumn() {
   if (bestPValue_ < effectiveAlpha) {
     columnFound_ = true;
 
-    // Now search for partition on the best column
-    ContingencyTable bestTable;
-    bestTable.load(dataPath_);
-    bestTable.setFirstColumn(targetColumn_);
-    bestTable.setSecondColumn(bestColumn_);
-    bestTable.setSkipEmptyValues(skipEmptyValues_);
-
-    if (rowBitmask_ != nullptr) {
-      bestTable.setRowFilter(rowBitmask_, rowBitmaskSize_);
-    }
-
-    bestTable.build();
+    // Now search for partition on the best column (reuse the already-loaded table instance)
+    ct.setSecondColumn(bestColumn_);
+    ct.build();
 
     // Find partition with its own alpha (typically no Bonferroni here)
     const double partitionEffectiveAlpha = computeEffectiveAlpha(partitionAlpha_, partitionBonferroni_, 1);
-    auto partition = bestTable.findOptimalPartition(partitionEffectiveAlpha);
+    auto partition = ct.findOptimalPartition(partitionEffectiveAlpha);
 
     if (partition.has_value()) {
       partitionFound_ = true;
