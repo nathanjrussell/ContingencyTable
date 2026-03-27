@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(ContingencyTable VERSION 1.0.0 LANGUAGES CXX)
+project(ContingencyTable VERSION 2.0.0 LANGUAGES CXX)
 
 include(FetchContent)
 
@@ -14,7 +14,7 @@ set(DATATABLE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   DataTable
   GIT_REPOSITORY https://github.com/nathanjrussell/DataTable.git
-  GIT_TAG v1.1.0
+  GIT_TAG v2.0.0
 )
 FetchContent_MakeAvailable(DataTable)
 
