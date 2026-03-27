@@ -24,6 +24,18 @@ class FeatureSelector {
 
   // Row/column filtering via bitmask
   void enabledRows(const std::uint32_t* bitmask, std::size_t sizeInBits);
+
+  // Overload: derive enabled row bitmask from row-index markers and a column whitelist.
+  // - rowIndices: per-row markers (will be mutated). 0 means enabled.
+  // - threshold: any marker >= threshold is reset to 0 before applying the column whitelist.
+  // - allowedValues: values considered "in set" for the column check.
+  // - columnIndex: DataTable column to inspect (row-by-row).
+  void enabledRows(
+      std::vector<std::uint32_t>& rowIndices,
+      std::uint32_t threshold,
+      const std::vector<std::uint32_t>& allowedValues,
+      std::size_t columnIndex);
+
   void enabledColumns(const std::uint32_t* bitmask, std::size_t sizeInBits);
 
   // Execute feature selection
@@ -51,6 +63,9 @@ class FeatureSelector {
 
  private:
   std::string dataPath_;
+    // Cached DataTable (loaded once in load()). Marked mutable so const getters can reuse it.
+    mutable DataTableLib::DataTable dataTable_;
+    bool dataTableLoaded_ = false;
   std::size_t targetColumn_ = 0;
 
   // Alpha thresholds
@@ -64,6 +79,10 @@ class FeatureSelector {
   std::size_t rowBitmaskSize_ = 0;
   const std::uint32_t* colBitmask_ = nullptr;
   std::size_t colBitmaskSize_ = 0;
+
+  // Owned row bitmask storage for the overload that constructs a mask internally.
+  // When non-empty, rowBitmask_ points to this buffer.
+  std::vector<std::uint32_t> ownedRowBitmask_;
 
   bool skipEmptyValues_ = true;
 
@@ -89,6 +108,4 @@ class FeatureSelector {
 };
 
 }  // namespace ContingencyTableLib
-
-
 

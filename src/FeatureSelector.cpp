@@ -1,5 +1,7 @@
 #include "ContingencyTable/FeatureSelector.h"
 
+#include <algorithm>
+#include <unordered_set>
 #include <stdexcept>
 
 namespace ContingencyTableLib {
@@ -10,6 +12,8 @@ FeatureSelector::~FeatureSelector() = default;
 
 void FeatureSelector::load(const std::string& path) {
   dataPath_ = path;
+  dataTable_.load(dataPath_);
+  dataTableLoaded_ = true;
   columnFound_ = false;
   partitionFound_ = false;
 }
@@ -42,8 +46,63 @@ void FeatureSelector::setSkipEmptyValues(bool skip) {
 void FeatureSelector::enabledRows(const std::uint32_t* bitmask, std::size_t sizeInBits) {
   rowBitmask_ = bitmask;
   rowBitmaskSize_ = sizeInBits;
+  ownedRowBitmask_.clear();
   columnFound_ = false;
   partitionFound_ = false;
+}
+
+void FeatureSelector::enabledRows(
+    std::vector<std::uint32_t>& rowIndices,
+    std::uint32_t threshold,
+    const std::vector<std::uint32_t>& allowedValues,
+    std::size_t columnIndex) {
+  if (dataPath_.empty() || !dataTableLoaded_) {
+    throw std::runtime_error("No data loaded. Call load() first.");
+  }
+
+  if (columnIndex >= dataTable_.getColumnCount()) {
+    throw std::out_of_range("Column index is out of range.");
+  }
+
+  const auto rowCount = static_cast<std::size_t>(dataTable_.getRowCount());
+  if (rowIndices.size() < rowCount) {
+    throw std::invalid_argument("rowIndices must be at least getRowCount() in size.");
+  }
+
+  // Step 1: any marker >= threshold becomes 0.
+  for (std::size_t i = 0; i < rowCount; ++i) {
+    if (rowIndices[i] >= threshold) {
+      rowIndices[i] = 0;
+    }
+  }
+
+  // Step 2: scan the requested column row-by-row.
+  // DataTable convention used by this repo: row 0 is the header row; data starts at row 1.
+  // We update rowIndices using the *DataTable row index*.
+  // Use a hash set for allowedValues membership to make this O(rows) average instead of O(rows * allowedValues).
+  const std::unordered_set<std::uint32_t> allowed(allowedValues.begin(), allowedValues.end());
+  for (std::size_t row = 1; row < rowCount; ++row) {
+    const auto value = dataTable_.lookupMap(row, static_cast<std::uint64_t>(columnIndex));
+    if (allowed.find(value) == allowed.end()) {
+      rowIndices[row] = threshold;
+    }
+  }
+
+  // Step 3: build bitmask (marker==0 => enabled => bit=1).
+  const std::size_t sizeInBits = rowCount;
+  const std::size_t numWords = (sizeInBits + 31) / 32;
+
+  ownedRowBitmask_.assign(numWords, 0);
+  for (std::size_t idx = 0; idx < sizeInBits; ++idx) {
+    if (rowIndices[idx] == 0) {
+      const std::size_t word = idx / 32;
+      const std::size_t bit = idx % 32;
+      ownedRowBitmask_[word] |= (1u << bit);
+    }
+  }
+
+  // Step 4: set this instance's enabled-rows bitmask to the owned storage.
+  enabledRows(ownedRowBitmask_.data(), sizeInBits);
 }
 
 void FeatureSelector::enabledColumns(const std::uint32_t* bitmask, std::size_t sizeInBits) {
@@ -142,30 +201,24 @@ void FeatureSelector::findSignificantColumn() {
 }
 
 std::uint64_t FeatureSelector::getRowCount() const {
-  if (dataPath_.empty()) {
+  if (dataPath_.empty() || !dataTableLoaded_) {
     throw std::runtime_error("No data loaded. Call load() first.");
   }
-  DataTableLib::DataTable dt;
-  dt.load(dataPath_);
-  return dt.getRowCount();
+  return dataTable_.getRowCount();
 }
 
 std::uint64_t FeatureSelector::getColumnCount() const {
-  if (dataPath_.empty()) {
+  if (dataPath_.empty() || !dataTableLoaded_) {
     throw std::runtime_error("No data loaded. Call load() first.");
   }
-  DataTableLib::DataTable dt;
-  dt.load(dataPath_);
-  return dt.getColumnCount();
+  return dataTable_.getColumnCount();
 }
 
 std::string FeatureSelector::getColumnHeader(std::uint64_t col) const {
-  if (dataPath_.empty()) {
+  if (dataPath_.empty() || !dataTableLoaded_) {
     throw std::runtime_error("No data loaded. Call load() first.");
   }
-  DataTableLib::DataTable dt;
-  dt.load(dataPath_);
-  return dt.getColumnHeader(col);
+  return dataTable_.getColumnHeader(col);
 }
 
 bool FeatureSelector::significantColumnFound() const {
