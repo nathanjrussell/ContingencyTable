@@ -69,6 +69,8 @@ int main(int argc, char** argv) {
         auto p1 = fs1.getSecondPartition();
         std::cout << "  Partition 0 size: " << p0.size() << " features\n";
         std::cout << "  Partition 1 size: " << p1.size() << " features\n";
+        std::cout << "  Partition 0 row count (active rows): " << fs1.getPartitionOneRowCount() << "\n";
+        std::cout << "  Partition 1 row count (active rows): " << fs1.getPartitionTwoRowCount() << "\n";
         std::cout << "  Partition chi-square: " << fs1.getPartitionTestStatistic() << "\n";
         std::cout << "  Partition p-value: " << fs1.getPartitionPValue() << "\n";
         std::cout << "  Partition DF: " << fs1.getPartitionDegreesOfFreedom() << "\n";

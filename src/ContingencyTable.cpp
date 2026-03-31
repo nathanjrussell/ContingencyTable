@@ -6,6 +6,8 @@
 #include <random>
 #include <set>
 #include <stdexcept>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace ContingencyTableLib {
@@ -228,6 +230,35 @@ double ContingencyTable::getPartitionPValue() const {
 
 std::uint64_t ContingencyTable::getPartitionDegreesOfFreedom() const {
   return partitionDegreesOfFreedom_;
+}
+
+std::pair<std::uint64_t, std::uint64_t> ContingencyTable::countRowsInPartitions(
+    const std::vector<std::uint32_t>& partition0) const {
+  if (dirty_) {
+    throw std::logic_error("Must call build() before counting partition row totals.");
+  }
+
+  if (jointCounts_.empty()) {
+    return {0ULL, 0ULL};
+  }
+
+  const std::unordered_set<std::uint32_t> p0(partition0.begin(), partition0.end());
+
+  std::uint64_t count0 = 0;
+  std::uint64_t count1 = 0;
+
+  for (const auto& kv : jointCounts_) {
+    const std::uint32_t featureB = kv.first.second;
+    const std::uint64_t n = kv.second;
+
+    if (p0.find(featureB) != p0.end()) {
+      count0 += n;
+    } else {
+      count1 += n;
+    }
+  }
+
+  return {count0, count1};
 }
 
 std::uint32_t ContingencyTable::determineRestarts(std::size_t numFeaturesB, double adjustedAlpha) const {

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -68,6 +69,12 @@ class ContingencyTable : public DataTableLib::DataTable {
   double getPartitionChiSquare() const;
   double getPartitionPValue() const;
   std::uint64_t getPartitionDegreesOfFreedom() const;
+
+  // Count how many included (active) rows fall into each side of a partition of column B.
+  // Requires build() to have been called so jointCounts_ is populated.
+  // Returns {rowsInPartition0, rowsInPartition1}.
+  std::pair<std::uint64_t, std::uint64_t> countRowsInPartitions(
+      const std::vector<std::uint32_t>& partition0) const;
 
  private:
   std::uint64_t colA_ = 0;

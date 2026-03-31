@@ -61,6 +61,11 @@ class FeatureSelector {
   std::vector<std::uint32_t> getFirstPartition() const;
   std::vector<std::uint32_t> getSecondPartition() const;
 
+  // Number of included (active) rows whose best-feature value falls into each partition.
+  // Partition "one" corresponds to getFirstPartition() and partition "two" to getSecondPartition().
+  std::uint64_t getPartitionOneRowCount() const;
+  std::uint64_t getPartitionTwoRowCount() const;
+
  private:
   std::string dataPath_;
     // Cached DataTable (loaded once in load()). Marked mutable so const getters can reuse it.
@@ -100,6 +105,10 @@ class FeatureSelector {
   std::uint64_t partitionDegreesOfFreedom_ = 0;
   std::vector<std::uint32_t> partition0_;
   std::vector<std::uint32_t> partition1_;
+
+  // Active-row counts for each partition side (computed when partitionFound_ is true).
+  std::uint64_t partition0RowCount_ = 0;
+  std::uint64_t partition1RowCount_ = 0;
 
   // Helpers
   double computeEffectiveAlpha(double alpha, bool applyBonferroni, std::size_t numTests) const;

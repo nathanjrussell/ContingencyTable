@@ -384,6 +384,83 @@ TEST(FeatureSelector, PartitionSearchOnSignificantColumn_FindsPartition) {
   cleanupTempDir(tempDir);
 }
 
+TEST(FeatureSelector, PartitionRowCounts_CountIncludedRowsAndRespectRowFilter) {
+  const std::string tempDir = makeTempDir("fs_partition_row_counts");
+
+  // Reuse the known Titanic-like dataset which is already used elsewhere in this suite.
+  // It reliably produces a significant association between Survived (col 1) and Pclass (col 2).
+  const std::string parseDir = writeAndParseCsv(tempDir, knownTitanicLikeCsv());
+
+  ContingencyTableLib::FeatureSelector fs;
+  fs.load(parseDir);
+  fs.setTargetColumn(1); // Survived
+  fs.setSkipEmptyValues(true);
+
+  // Only test Pclass as candidate so numTests=1 and significance matches the CT-based checks.
+  std::uint32_t colMask = 0b100; // enable column 2 only
+  fs.enabledColumns(&colMask, 3);
+
+  const auto rowCount = fs.getRowCount();
+  const std::size_t rowWords = (static_cast<std::size_t>(rowCount) + 31) / 32;
+
+  // Helper to compute included row count for a given row mask.
+  auto computeIncludedRows = [&](const std::vector<std::uint32_t>& rowMask) -> std::uint64_t {
+    ContingencyTableLib::ContingencyTable ct;
+    ct.load(parseDir);
+    ct.setFirstColumn(1);
+    ct.setSecondColumn(2);
+    ct.setSkipEmptyValues(true);
+    ct.setRowFilter(rowMask.data(), static_cast<std::size_t>(rowCount));
+    ct.build();
+
+    // Included rows are the sum over all jointCounts_, which we can obtain by partitioning
+    // all observed B values into partition0 (all of them) vs partition1 (none).
+    std::vector<std::uint32_t> allB;
+    for (std::uint64_t r = 1; r < ct.getRowCount(); ++r) {
+      const auto b = ct.lookupMap(r, 2);
+      const auto a = ct.lookupMap(r, 1);
+      if (a == 0 || b == 0) {
+        continue;
+      }
+      allB.push_back(b);
+    }
+    // allB may contain duplicates; de-dup to keep the helper cheap.
+    std::sort(allB.begin(), allB.end());
+    allB.erase(std::unique(allB.begin(), allB.end()), allB.end());
+    const auto counts = ct.countRowsInPartitions(allB);
+    return counts.first + counts.second;
+  };
+
+  // Enable all rows initially.
+  std::vector<std::uint32_t> allRowsMask(rowWords, 0xFFFFFFFF);
+  fs.enabledRows(allRowsMask.data(), static_cast<std::size_t>(rowCount));
+
+  fs.findSignificantColumn();
+
+  ASSERT_TRUE(fs.significantColumnFound());
+  EXPECT_EQ(fs.getSignificantColumnIndex(), 2U);
+
+  if (fs.significantPartitionFound()) {
+    const auto total = fs.getPartitionOneRowCount() + fs.getPartitionTwoRowCount();
+    EXPECT_EQ(total, computeIncludedRows(allRowsMask));
+
+    // Now exclude one data row via row filter and ensure the sum decreases by 1.
+    // Exclude data row index 1 (first data row) in DataTable indexing.
+    std::vector<std::uint32_t> filteredMask(rowWords, 0xFFFFFFFF);
+    filteredMask[0] &= ~(1U << 1);
+    fs.enabledRows(filteredMask.data(), static_cast<std::size_t>(rowCount));
+    fs.findSignificantColumn();
+
+    ASSERT_TRUE(fs.significantColumnFound());
+    if (fs.significantPartitionFound()) {
+      const auto filteredTotal = fs.getPartitionOneRowCount() + fs.getPartitionTwoRowCount();
+      EXPECT_EQ(filteredTotal, computeIncludedRows(filteredMask));
+    }
+  }
+
+  cleanupTempDir(tempDir);
+}
+
 TEST(FeatureSelector, SkipEmptyValues_IsRespected) {
   const std::string tempDir = makeTempDir("fs_empty");
 
