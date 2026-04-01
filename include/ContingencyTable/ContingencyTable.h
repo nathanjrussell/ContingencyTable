@@ -76,6 +76,12 @@ class ContingencyTable : public DataTableLib::DataTable {
   std::pair<std::uint64_t, std::uint64_t> countRowsInPartitions(
       const std::vector<std::uint32_t>& partition0) const;
 
+  // Return marginal counts for the first column (column A) from the most recent build().
+  // The returned map is: featureA -> count across included rows.
+  // Note: when setSkipEmptyValues(true) is in effect, rows with featureA==0 are not
+  // included in jointCounts_ and therefore will not appear in this output.
+  std::map<std::uint32_t, std::uint64_t> getFirstColumnCounts() const;
+
  private:
   std::uint64_t colA_ = 0;
   std::uint64_t colB_ = 0;

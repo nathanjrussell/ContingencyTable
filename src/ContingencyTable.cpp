@@ -261,6 +261,21 @@ std::pair<std::uint64_t, std::uint64_t> ContingencyTable::countRowsInPartitions(
   return {count0, count1};
 }
 
+std::map<std::uint32_t, std::uint64_t> ContingencyTable::getFirstColumnCounts() const {
+  if (dirty_) {
+    throw std::logic_error("Must call build() before reading first-column counts.");
+  }
+
+  std::map<std::uint32_t, std::uint64_t> countsA;
+  for (const auto& kv : jointCounts_) {
+    const std::uint32_t featureA = kv.first.first;
+    const std::uint64_t n = kv.second;
+    countsA[featureA] += n;
+  }
+
+  return countsA;
+}
+
 std::uint32_t ContingencyTable::determineRestarts(std::size_t numFeaturesB, double adjustedAlpha) const {
   // Bonferroni correction: assume testing ~2^|B| partitions
   // Map adjusted alpha (post-correction) to restart count

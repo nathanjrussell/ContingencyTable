@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(ContingencyTable VERSION 4.2.0 LANGUAGES CXX)
+project(ContingencyTable VERSION 4.3.0 LANGUAGES CXX)
 
 include(FetchContent)
 

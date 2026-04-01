@@ -21,6 +21,7 @@ void FeatureSelector::load(const std::string& path) {
   partitionFound_ = false;
   partition0RowCount_ = 0;
   partition1RowCount_ = 0;
+  targetCounts_.clear();
 }
 
 void FeatureSelector::setTargetColumn(std::size_t columnIndex) {
@@ -38,6 +39,7 @@ void FeatureSelector::setTargetColumn(std::size_t columnIndex) {
   partitionFound_ = false;
   partition0RowCount_ = 0;
   partition1RowCount_ = 0;
+  targetCounts_.clear();
 }
 
 void FeatureSelector::setColumnAlpha(double alpha, bool applyBonferroni) {
@@ -47,6 +49,7 @@ void FeatureSelector::setColumnAlpha(double alpha, bool applyBonferroni) {
   partitionFound_ = false;
   partition0RowCount_ = 0;
   partition1RowCount_ = 0;
+  targetCounts_.clear();
 }
 
 void FeatureSelector::setPartitionAlpha(double alpha, bool applyBonferroni) {
@@ -55,6 +58,7 @@ void FeatureSelector::setPartitionAlpha(double alpha, bool applyBonferroni) {
   partitionFound_ = false;
   partition0RowCount_ = 0;
   partition1RowCount_ = 0;
+  targetCounts_.clear();
 }
 
 void FeatureSelector::setSkipEmptyValues(bool skip) {
@@ -63,6 +67,7 @@ void FeatureSelector::setSkipEmptyValues(bool skip) {
   partitionFound_ = false;
   partition0RowCount_ = 0;
   partition1RowCount_ = 0;
+  targetCounts_.clear();
 }
 
 void FeatureSelector::enabledRows(const std::uint32_t* bitmask, std::size_t sizeInBits) {
@@ -73,6 +78,7 @@ void FeatureSelector::enabledRows(const std::uint32_t* bitmask, std::size_t size
   partitionFound_ = false;
   partition0RowCount_ = 0;
   partition1RowCount_ = 0;
+  targetCounts_.clear();
 }
 
 void FeatureSelector::enabledRows(
@@ -136,6 +142,7 @@ void FeatureSelector::enabledColumns(const std::uint32_t* bitmask, std::size_t s
   partitionFound_ = false;
   partition0RowCount_ = 0;
   partition1RowCount_ = 0;
+  targetCounts_.clear();
 }
 
 void FeatureSelector::findSignificantColumn() {
@@ -168,6 +175,7 @@ void FeatureSelector::findSignificantColumn() {
   partitionFound_ = false;
   partition0RowCount_ = 0;
   partition1RowCount_ = 0;
+  targetCounts_.clear();
   bestPValue_ = 1.0;
   bestChiSquare_ = 0.0;
   bestDegreesOfFreedom_ = 0;
@@ -210,6 +218,10 @@ void FeatureSelector::findSignificantColumn() {
     ct.setSecondColumn(bestColumn_);
     ct.build();
 
+    // Cache target (first column) marginal counts for the final best-column build.
+    // This matches the included-row population used for the best-column test.
+    targetCounts_ = ct.getFirstColumnCounts();
+
     // Find partition with its own alpha (typically no Bonferroni here)
     const double partitionEffectiveAlpha = computeEffectiveAlpha(partitionAlpha_, partitionBonferroni_, 1);
     auto partition = ct.findOptimalPartition(partitionEffectiveAlpha);
@@ -227,6 +239,11 @@ void FeatureSelector::findSignificantColumn() {
       partition1RowCount_ = counts.second;
     }
   }
+}
+
+std::map<std::uint32_t, std::uint64_t> FeatureSelector::getTargetCounts() const {
+  ensureColumnFound();
+  return targetCounts_;
 }
 
 std::uint64_t FeatureSelector::getRowCount() const {

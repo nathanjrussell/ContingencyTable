@@ -4,6 +4,7 @@
 #include <DataTable/DataTable.h>
 
 #include <cstdint>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -61,6 +62,10 @@ class FeatureSelector {
   std::vector<std::uint32_t> getFirstPartition() const;
   std::vector<std::uint32_t> getSecondPartition() const;
 
+  // Target (column A) feature counts among included rows in the final best-column build.
+  // Available after significantColumnFound() is true.
+  std::map<std::uint32_t, std::uint64_t> getTargetCounts() const;
+
   // Number of included (active) rows whose best-feature value falls into each partition.
   // Partition "one" corresponds to getFirstPartition() and partition "two" to getSecondPartition().
   std::uint64_t getPartitionOneRowCount() const;
@@ -109,6 +114,9 @@ class FeatureSelector {
   // Active-row counts for each partition side (computed when partitionFound_ is true).
   std::uint64_t partition0RowCount_ = 0;
   std::uint64_t partition1RowCount_ = 0;
+
+  // Cached marginal counts for the target column (computed during findSignificantColumn()).
+  std::map<std::uint32_t, std::uint64_t> targetCounts_;
 
   // Helpers
   double computeEffectiveAlpha(double alpha, bool applyBonferroni, std::size_t numTests) const;

@@ -63,6 +63,12 @@ int main(int argc, char** argv) {
       std::cout << "  Degrees of freedom: " << fs1.getColumnDegreesOfFreedom() << "\n";
       std::cout << "  P-value: " << fs1.getColumnPValue() << "\n";
 
+      const auto targetCounts = fs1.getTargetCounts();
+      std::cout << "\n  Target feature counts (active rows):\n";
+      for (const auto& kv : targetCounts) {
+        std::cout << "    " << kv.first << " -> " << kv.second << "\n";
+      }
+
       if (fs1.significantPartitionFound()) {
         std::cout << "\n✓ Optimal partition FOUND!\n";
         auto p0 = fs1.getFirstPartition();
