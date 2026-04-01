@@ -325,6 +325,57 @@ TEST(FeatureSelector, GetTargetCounts_CachesMarginalsAndClearsOnRerun) {
   cleanupTempDir(tempDir);
 }
 
+TEST(FeatureSelector, GetTargetCounts_AvailableEvenWhenNoSignificantColumnFound) {
+  const std::string tempDir = makeTempDir("feature_selector_target_counts_no_sig");
+  // X is constant, so it should not be a significant predictor of T.
+  const std::string csv = R"(ID,T,X
+1,A,S
+2,A,S
+3,B,S
+4,B,S
+)";
+
+  const std::string parseDir = writeAndParseCsv(tempDir, csv);
+
+  ContingencyTableLib::FeatureSelector fs;
+  fs.load(parseDir);
+  fs.setTargetColumn(1);
+
+  // Enable all rows.
+  const auto rowCount = static_cast<std::size_t>(fs.getRowCount());
+  const std::size_t rowWords = (rowCount + 31) / 32;
+  std::vector<std::uint32_t> allRowsMask(rowWords, 0xFFFFFFFF);
+  fs.enabledRows(allRowsMask.data(), rowCount);
+
+  // Enable only column 2 as candidate (X).
+  const auto colCount = static_cast<std::size_t>(fs.getColumnCount());
+  std::vector<std::uint32_t> colMask((colCount + 31) / 32, 0);
+  colMask[0] |= (1U << 2);
+  fs.enabledColumns(colMask.data(), colCount);
+
+  fs.setSkipEmptyValues(true);
+  fs.setColumnAlpha(1e-12, false);  // Extremely strict to ensure NOT significant.
+  fs.setPartitionAlpha(1e-12, false);
+
+  fs.findSignificantColumn();
+  ASSERT_FALSE(fs.significantColumnFound());
+
+  // Still should be able to access target marginal counts for the enabled row population.
+  const auto counts = fs.getTargetCounts();
+
+  DataTableLib::DataTable dt;
+  dt.load(parseDir);
+  const auto idA = dt.lookupMap(1, 1);
+  const auto idB = dt.lookupMap(3, 1);
+
+  ASSERT_TRUE(counts.find(idA) != counts.end());
+  ASSERT_TRUE(counts.find(idB) != counts.end());
+  EXPECT_EQ(counts.at(idA), 2ULL);
+  EXPECT_EQ(counts.at(idB), 2ULL);
+
+  cleanupTempDir(tempDir);
+}
+
 // ============================================================================
 // FeatureSelector Tests
 // ============================================================================

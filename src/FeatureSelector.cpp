@@ -163,8 +163,12 @@ void FeatureSelector::findSignificantColumn() {
   // Count enabled columns for Bonferroni correction
   const std::size_t numTests = countSetBits(colBitmask_, colBitmaskSize_);
   if (numTests == 0) {
+    // No candidate columns: nothing to test or build. Clear any cached results.
     columnFound_ = false;
     partitionFound_ = false;
+    partition0RowCount_ = 0;
+    partition1RowCount_ = 0;
+    targetCounts_.clear();
     return;
   }
 
@@ -188,6 +192,19 @@ void FeatureSelector::findSignificantColumn() {
   ct.setSkipEmptyValues(skipEmptyValues_);
   if (rowBitmask_ != nullptr) {
     ct.setRowFilter(rowBitmask_, rowBitmaskSize_);
+  }
+
+  // Compute and cache the target-column marginal counts for the CURRENT enabled-row population,
+  // even if no significant predictor column is ultimately found.
+  // We do this by building the table once using the first enabled candidate column.
+  for (std::size_t col = 0; col < colBitmaskSize_; ++col) {
+    if (!isBitSet(colBitmask_, col)) {
+      continue;
+    }
+    ct.setSecondColumn(col);
+    ct.build();
+    targetCounts_ = ct.getFirstColumnCounts();
+    break;
   }
 
   // Test each enabled column
@@ -242,7 +259,6 @@ void FeatureSelector::findSignificantColumn() {
 }
 
 std::map<std::uint32_t, std::uint64_t> FeatureSelector::getTargetCounts() const {
-  ensureColumnFound();
   return targetCounts_;
 }
 

@@ -62,8 +62,8 @@ class FeatureSelector {
   std::vector<std::uint32_t> getFirstPartition() const;
   std::vector<std::uint32_t> getSecondPartition() const;
 
-  // Target (column A) feature counts among included rows in the final best-column build.
-  // Available after significantColumnFound() is true.
+  // Target (column A) feature counts among enabled rows from the last findSignificantColumn() run.
+  // Available after findSignificantColumn() (may be empty if there are no enabled candidate columns).
   std::map<std::uint32_t, std::uint64_t> getTargetCounts() const;
 
   // Number of included (active) rows whose best-feature value falls into each partition.
