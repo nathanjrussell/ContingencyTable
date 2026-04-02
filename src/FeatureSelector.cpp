@@ -283,6 +283,13 @@ std::string FeatureSelector::getColumnHeader(std::uint64_t col) const {
   return dataTable_.getColumnHeader(col);
 }
 
+std::string FeatureSelector::getColumnValue(std::uint64_t col, std::uint32_t featureId) const {
+  if (dataPath_.empty() || !dataTableLoaded_) {
+    throw std::runtime_error("No data loaded. Call load() first.");
+  }
+  return dataTable_.getColumnValue(col, featureId);
+}
+
 bool FeatureSelector::significantColumnFound() const {
   return columnFound_;
 }

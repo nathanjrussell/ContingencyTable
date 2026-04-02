@@ -47,6 +47,10 @@ class FeatureSelector {
   std::uint64_t getColumnCount() const;
   std::string getColumnHeader(std::uint64_t col) const;
 
+  // Pass-through: resolve a per-column featureId back to its original string.
+  // Throws if no data has been loaded.
+  std::string getColumnValue(std::uint64_t col, std::uint32_t featureId) const;
+
   // Column selection results (throws if !significantColumnFound())
   bool significantColumnFound() const;
   std::size_t getSignificantColumnIndex() const;
